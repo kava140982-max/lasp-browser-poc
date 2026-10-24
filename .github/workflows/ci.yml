@@ -19,6 +19,9 @@ jobs:
         run: |
           node --check src/lasp-crypto.js
           node --check src/lasp-core.js
+          node --check tests/adversarial-tests.cjs
+      - name: Run adversarial and positive tests
+        run: npm test
       - name: Check JSON/YAML metadata
         run: |
           python3 - <<'PY'

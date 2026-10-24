@@ -4,6 +4,7 @@
   "private": true,
   "description": "LASP Browser-PoC (SIMULATED_LAB, not a certification)",
   "scripts": {
-    "start": "npx serve ."
+    "start": "npx serve .",
+    "test": "node --test tests/adversarial-tests.cjs"
   }
 }
