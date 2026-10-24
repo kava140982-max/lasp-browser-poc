@@ -176,7 +176,7 @@
   //    vertauscht gegenüber dem Entwurf, Rückgabe ist ein JSON-BLOB (kein Objekt
   //    mit .iterations) — Iterationen stehen als Konstante im alg-Feld.
   //  - execInSandbox(cap, capPayloadForVerify, issuerPub, io) in lasp-core.js:
-  //    echte Signatur-Capability-Signatur (VC), kein { action, payload }-Objekt;
+  //    erwartet ein signiertes "lasp/cap/v1"-Token (kein { action, payload }-Objekt);
   //    Ergebnisformat ist { ok, reason } statt { allowed }.
   //  - Ein Ketten-Reset nach dem Seal würde das Siegel selbst auslöschbar machen
   //    (append-only-Prinzip) — deshalb bleibt die Kette erhalten; optional kann
@@ -222,6 +222,8 @@
       await L.finalizeChain();
       chainStatus = await L.verifyChain();
       if (!chainStatus.ok) {
+        // Theoretischer Zweig: nach frischem finalizeChain() muss die Kette valide
+        // sein. Bewusst als Fail-Closed behalten — niemals auf Verdacht versiegeln.
         L.audit("PIPELINE_SEAL_ABORTED", {
           reason: "CHAIN_INTEGRITY_CHECK_FAILED",
           at: chainStatus.at,
@@ -297,9 +299,9 @@
   // mit Feldern { tool, hostAllow, pathAllow, envAllow, exp, nonce, issuer } — NICHT
   // eine issueVC()-"lasp/vc/v1"-Credential (deren Feld heißt "capability", nicht "tool";
   // das war die Ursache des CAP_TOOL_MISMATCH im ersten Testlauf).
-  // Die Allowlists sind bewusst offen (host "" reicht an jede Allowlist durch,
-  // endsWith("") ist immer true); die echten Gates sind: ECDSA-Signatur der Cap,
-  // cap.nonce-Revocation und die Policy-Engine (Rate-Limit, Kill-Switch, Blocklist).
+  // Offene Allowlisten hier: null ueberspringt den Check; [] waere DENY ALL
+  // (.some auf leerer Liste = false). Die echten Gates sind: ECDSA-Signatur der
+  // Cap, cap.nonce-Revocation und die Policy-Engine (Rate-Limit, Kill-Switch, Blocklist).
   async function _buildSealCapability(C, options) {
     const keys = options.humanKeys;
     if (!keys || !keys.priv || !keys.did) {
