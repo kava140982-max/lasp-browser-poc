@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — Stufe 2 (Finalize, Wasm-Gating & AES-GCM/PBKDF2 Seal)
+
+- Extended `src/lasp-pipeline-core.js` with `finalizeAndSealAuditLog(password, options)`:
+  chain-integrity pre-check on the finalized state (tampering surfaces before sealing;
+  a blind re-hash would erase it), real `execInSandbox` capability gate (signed
+  `lasp/cap/v1` token in the exact format `checkCapability()` expects), sealing via the
+  existing `LASPCrypto.encryptLog` (PBKDF2-100k/AES-GCM-256), and an append-only
+  `PIPELINE_SEALED` proof entry (`sha256` of the sealed blob). Fail-closed on every path:
+  weak password, missing issuer, denied capability, corrupted chain — aborts are logged as
+  `PIPELINE_SEAL_ABORTED` before anything is encrypted. No automatic chain reset after
+  sealing (append-only); opt-in via `options.resetPipelineHead`. Default seal is
+  metadata-only (`i/ts/type/prev`); full detail export requires `options.exportPlaintext`.
+- Verified by a Node/WebCrypto integration test against the real modules: 17 checks green
+  (happy path, decrypt roundtrip, wrong-password GCM rejection, tamper detection, all
+  fail-closed gates).
+
 ## Unreleased — Stufe-1-Iteration (B → A → C)
 
 - Added `src/lasp-pipeline-core.js`: browser-compatible pipeline module exposing `window.LASPPipeline`
