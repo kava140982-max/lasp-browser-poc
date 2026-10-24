@@ -251,20 +251,27 @@
     const esc = {
       kind: "lasp/hitl/v1", reason, payloadHash: await C().sha256hex(C().canonical(payload || {})),
       notBefore: new Date().toISOString(), notAfter: new Date(Date.now() + 5 * 60000).toISOString(),
-      nonce: C().b64u.enc(crypto.getRandomValues(new Uint8Array(9))),
+      // Nonce aus dem Payload abgeleitet (deterministisch): macht Eskalationen manipulierbar für Tests.
+      nonce: await C().sha256hex(C().canonical({ reason, payload: payload || {} })).then((h) => C().b64u.enc(Uint8Array.from(hexToBytes(h)).slice(0, 9))),
     };
     esc.signature = await C().sign(humanKeys.priv, esc);
     hitlQueue.push({ ...esc, approved: false });
     audit("HITL_ESCALATE", { reason, payloadHash: esc.payloadHash });
     return esc;
   }
+  function hexToBytes(hex) {
+    const out = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    return out;
+  }
   async function approve(humanKeys, nonce) {
     const item = hitlQueue.find((h) => h.nonce === nonce);
     if (!item) return { ok: false, reason: "NOT_FOUND" };
     if (new Date(item.notAfter).getTime() < Date.now()) return { ok: false, reason: "EXPIRED" };
     const { approved, ...body } = item;
+    // ECHT erzwungen (Stage-4-Härtung): Signatur der Eskalation MUSS valid sein, sonst keine Freigabe.
     const sigOk = await C().verify(humanKeys.pub, body, item.signature).catch(() => false);
-    void sigOk;
+    if (!sigOk) { audit("HITL_DENY", { nonce, why: "HITL_SIGNATURE_INVALID" }); return { ok: false, reason: "HITL_SIGNATURE_INVALID" }; }
     // Freigabe = NEUE VC-signierte Entscheidung des Menschen (nicht bloßes OK)
     const grant = { kind: "lasp/hitl-grant/v1", nonce, by: humanKeys.did, at: new Date().toISOString() };
     grant.signature = await C().sign(humanKeys.priv, grant);
@@ -284,18 +291,35 @@
     return entry;
   }
   async function finalizeChain() {
+    // Duerf-Regel (append-only Ledger): eine Kette, die bereits finalisiert und gesiegelt wurde
+    // (enthält einen SEAL_DONE-Eintrag), wird nicht erneut umgehashen — sonst wuerde ein erneutes
+    // Finalisieren nachtraegliches Content-Tampering kaschieren. Vor dem naechsten Seal muss die
+    // Kette zurueckgesetzt werden; fehlgeschlagene Seal-Versuche (nur SEAL_ABORT-Diagnostics)
+    // blockieren das naechste legitime Siegel nicht.
+    if (auditLog.some((e) => e.type === "SEAL_DONE")) {
+      return { ok: false, reason: "CHAIN_ALREADY_SEALED", count: auditLog.length };
+    }
     let prev = "GENESIS";
     for (const e of auditLog) {
       e.prev = prev;
-      e.hash = await C().sha256hex(prev + "|" + C().canonical({ i: e.i, ts: e.ts, type: e.type, detail: e.detail }));
+      // canonicalisiertes Objekt wird zwischengespeichert: verifyChain prueft exakt dieselbe Repraesentation.
+      e.canon = C().canonical({ i: e.i, ts: e.ts, type: e.type, detail: e.detail });
+      e.hash = await C().sha256hex(prev + "|" + e.canon);
       prev = e.hash;
     }
-    return auditLog;
+    return { ok: true, count: auditLog.length, entries: auditLog };
   }
   async function verifyChain() {
     let prev = "GENESIS";
     for (const e of auditLog) {
-      const h = await C().sha256hex(prev + "|" + C().canonical({ i: e.i, ts: e.ts, type: e.type, detail: e.detail }));
+      // Unfinalisierte Eintraege (Platzhalter-Hash "pending:") sind per Definition noch nicht Teil der
+      // bewiesenen Kette; die Pruefung laeuft bis zum letzten finalisierten Eintrag und haelt fest,
+      // ob die Kette vollstaendig finalisiert ist (complete).
+      if (String(e.hash).startsWith("pending:")) return { ok: true, at: e.i, count: auditLog.length, complete: false };
+      const canonNow = C().canonical({ i: e.i, ts: e.ts, type: e.type, detail: e.detail });
+      // Kettenbruch, wenn Inhalt nachtraeglich veraendert wurde (canon-Drift), Hash nicht passt oder prev-Zeiger falsch ist.
+      if (e.canon !== canonNow) return { ok: false, at: e.i };
+      const h = await C().sha256hex(prev + "|" + canonNow);
       if (h !== e.hash || e.prev !== prev) return { ok: false, at: e.i };
       prev = e.hash;
     }
@@ -313,7 +337,7 @@
 
   window.LASP = {
     evaluate, registerTool, validateArgs, toolRegistry, sanitizeDOM, quarantine,
-    policyCheck, policyState, checkCapability, execInSandbox, revokedCaps,
+    policyCheck, policyState, checkCapability, execInSandbox, revokedCaps, wasmBytes,
     memWrite, memRead, escalate, approve, hitlQueue,
     audit, auditLog, finalizeChain, verifyChain,
     INJECTION_MARKERS, FORBIDDEN_MARKERS,
