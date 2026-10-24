@@ -27,6 +27,20 @@
   const ALLOWED_DATA = ["public_research", "internal_research", "clinical_pii", "classified"];
   const ALLOWED_TASKS = ["classify", "assess", "plan", "summarize", "crosswalk"];
   const ALLOWED_MODULES = ["lasp-proxy", "lasp-sandbox", "lasp-memory", "lasp-identity"];
+  const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\u2060\uFEFF]/u;
+  const ZERO_WIDTH_NAMES = { "\u200B": "ZERO_WIDTH_SPACE", "\u200C": "ZERO_WIDTH_NON_JOINER", "\u200D": "ZERO_WIDTH_JOINER", "\u2060": "WORD_JOINER", "\uFEFF": "ZERO_WIDTH_NO_BREAK_SPACE" };
+
+  function inspectInjection(value) {
+    const text = String(value ?? "");
+    const zero = [...text].find((ch) => ZERO_WIDTH_RE.test(ch));
+    const marker = Object.entries(INJECTION_MARKERS).find(([, markers]) => markers.some((m) => text.toLowerCase().includes(m.toLowerCase())));
+    const forbidden = FORBIDDEN_MARKERS.find((m) => text.toLowerCase().includes(m));
+    const reasons = [];
+    if (zero) reasons.push(ZERO_WIDTH_NAMES[zero] || "INVISIBLE_UNICODE");
+    if (marker) reasons.push("INJECTION_" + marker[0]);
+    if (forbidden) reasons.push("FORBIDDEN_INTENT");
+    return { isBlocked: reasons.length > 0, reasons: [...new Set(reasons)] };
+  }
 
   // --- 9-Stufen-Evaluator: Schema→Auth→Tenant→Data→Inject→Task→Egress→Evidence→Output ---
   function evaluate(req) {
@@ -54,6 +68,9 @@
     if (req.data_class === "internal_research" && req.model_route === "api") return out(req, "blocked", R("DATA-01", ["DATA_ROUTE_BLOCKED"]));
     // 5 INJECT (🟡)
     const text = (req.context_payload || "").toLowerCase();
+    const inject = inspectInjection(req.context_payload);
+    if (req.inject_blocked === true || inject.isBlocked && inject.reasons.some((r) => r.startsWith("ZERO_WIDTH") || r === "INVISIBLE_UNICODE"))
+      return out(req, "denied", R("SAFE-01", ["INJECT-01", "INVISIBLE_UNICODE_BLOCKED"]));
     for (const [lang, markers] of Object.entries(INJECTION_MARKERS))
       if (markers.some((m) => text.includes(m.toLowerCase()))) return out(req, "denied", R("SAFE-01", ["INJECT-01", "INJECTION_" + lang]));
     if (req.domain_case === "forbidden") return out(req, "denied", R("SAFE-01", ["DOMAIN_FORBIDDEN_INTENT"]));
@@ -129,20 +146,27 @@
   function sanitizeDOM(rootEl) {
     const findings = [];
     const scope = rootEl || document;
+    const inspectNode = (where, el, value) => {
+      const result = inspectInjection(value);
+      if (result.isBlocked) findings.push({ where, tag: el.tagName || "NODE", hit: result.reasons.join(","), isBlocked: true });
+    };
     scope.querySelectorAll("[aria-label]").forEach((el) => {
       const v = el.getAttribute("aria-label") || "";
+      inspectNode("aria-label", el, v);
       const hit = Object.values(INJECTION_MARKERS).flat().concat(FORBIDDEN_MARKERS)
         .find((m) => v.toLowerCase().includes(m.toLowerCase()));
       if (hit) { findings.push({ where: "aria-label", tag: el.tagName, hit }); el.setAttribute("aria-label", "[bereinigt durch LASP]"); }
     });
     scope.querySelectorAll('[aria-hidden="true"]').forEach((el) => {
       const t = (el.textContent || "");
+      inspectNode("aria-hidden", el, t);
       const hit = Object.values(INJECTION_MARKERS).flat().concat(FORBIDDEN_MARKERS)
         .find((m) => t.toLowerCase().includes(m.toLowerCase()));
       if (hit && t.trim()) { findings.push({ where: "aria-hidden", tag: el.tagName, hit }); el.textContent = ""; }
     });
     scope.querySelectorAll('meta[name]').forEach((el) => {
       const c = el.getAttribute("content") || "";
+      inspectNode("meta:" + el.getAttribute("name"), el, c);
       const hit = Object.values(INJECTION_MARKERS).flat().concat(FORBIDDEN_MARKERS)
         .find((m) => c.toLowerCase().includes(m.toLowerCase()));
       if (hit) { findings.push({ where: "meta:" + el.getAttribute("name"), tag: "META", hit }); el.setAttribute("content", "[bereinigt]"); }
@@ -154,6 +178,7 @@
   // --- Q-Sanitizer (deterministisch, steht ehrlich für Q-LLM) ---
   function quarantine(rawText, opts = {}) {
     const text = String(rawText ?? "");
+    const injection = inspectInjection(text);
     const quotes = [];
     const dropped = [];
     const q = text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
@@ -168,6 +193,8 @@
       fields: { text: cleaned,tenant: opts.tenant || "sandbox-tenant-1" },
       quotes, dropped: [...new Set(dropped)],
       risk: quotes.length ? "high" : "low",
+      isBlocked: injection.isBlocked,
+      injectionReasons: injection.reasons,
       qllm_note: "SIMULATED_LAB: deterministischer Q-Sanitizer (kein Modellaufruf)",
     };
   }
@@ -202,22 +229,29 @@
   }
   function checkCapability(cap, { tool, host, path, env }) {
     if (!cap || cap.tool !== tool) return "CAP_TOOL_MISMATCH";
+    if (!Array.isArray(cap.hostAllow) || !Array.isArray(cap.pathAllow) || !Array.isArray(cap.envAllow)) return "CAP_ALLOWLIST_REQUIRED";
+    if (cap.hostAllow.some((h) => h === "*" || h == null) || cap.pathAllow.some((p) => p === "*" || p == null) || cap.envAllow.some((k) => k === "*" || k == null)) return "CAP_WILDCARD_FORBIDDEN";
     if (revokedCaps.has(cap.nonce)) return "CAP_REVOKED";
-    if (new Date(cap.exp).getTime() < Date.now()) return "CAP_EXPIRED";
-    if (cap.hostAllow && !cap.hostAllow.some((h) => host === h || host.endsWith(h))) return "CAP_HOST_DENIED";
-    if (cap.pathAllow && !cap.pathAllow.some((p) => path.startsWith(p))) return "CAP_PATH_DENIED";
-    if (cap.envAllow && env && !Object.keys(env).every((k) => cap.envAllow.includes(k))) return "CAP_ENV_DENIED";
+    if (!cap.exp || !Number.isFinite(new Date(cap.exp).getTime()) || new Date(cap.exp).getTime() < Date.now()) return "CAP_EXPIRED";
+    if (!cap.hostAllow.some((h) => host === h || host.endsWith("." + h))) return "CAP_HOST_DENIED";
+    const pathAllowed = cap.pathAllow.some((p) => path === p || (p.endsWith("/") ? path.startsWith(p) : path.startsWith(p + "/")));
+    if (!pathAllowed) return "CAP_PATH_DENIED";
+    if (env && !Object.keys(env).every((k) => cap.envAllow.includes(k))) return "CAP_ENV_DENIED";
     return null;
+  }
+  function capabilityDenied(reason, io) {
+    audit("PIPELINE_CAPABILITY_DENIED", { reason, tool: io && io.tool, path: io && io.path });
+    return { ok: false, reason };
   }
   async function execInSandbox(cap, capPayloadForVerify, issuerPub, io) {
     // 1. Signatur VOR allem anderen
     const { signature, ...body } = cap;
     const sigOk = await C().verify(issuerPub, body, signature).catch(() => false);
-    if (!sigOk) return { ok: false, reason: "CAP_BAD_SIGNATURE" };
+    if (!sigOk) return capabilityDenied("CAP_BAD_SIGNATURE", io);
     const deny = checkCapability(cap, io);
-    if (deny) return { ok: false, reason: deny };
+    if (deny) return capabilityDenied(deny, io);
     const pol = policyCheck({ tool: io.tool, amount: io.amount || 0, host: io.host, envelope: io.envelope });
-    if (!pol.ok) return { ok: false, reason: "POLICY_" + pol.reason };
+    if (!pol.ok) return capabilityDenied("POLICY_" + pol.reason, io);
     // 2. Erst JETZT Wasm instanziieren (echte Ausführung)
     const mod = await WebAssembly.instantiate(wasmBytes());
     const add = mod.instance.exports.add;
@@ -250,6 +284,7 @@
   async function escalate(humanKeys, reason, payload) {
     const esc = {
       kind: "lasp/hitl/v1", reason, payloadHash: await C().sha256hex(C().canonical(payload || {})),
+      principal: humanKeys.did,
       notBefore: new Date().toISOString(), notAfter: new Date(Date.now() + 5 * 60000).toISOString(),
       nonce: C().b64u.enc(crypto.getRandomValues(new Uint8Array(9))),
     };
@@ -260,11 +295,12 @@
   }
   async function approve(humanKeys, nonce) {
     const item = hitlQueue.find((h) => h.nonce === nonce);
-    if (!item) return { ok: false, reason: "NOT_FOUND" };
-    if (new Date(item.notAfter).getTime() < Date.now()) return { ok: false, reason: "EXPIRED" };
-    const { approved, ...body } = item;
-    const sigOk = await C().verify(humanKeys.pub, body, item.signature).catch(() => false);
-    void sigOk;
+    if (!item) { audit("HITL_APPROVE_DENIED", { nonce, reason: "NOT_FOUND" }); return { ok: false, reason: "NOT_FOUND" }; }
+    if (item.principal !== humanKeys.did) { audit("HITL_SIGNATURE_INVALID", { nonce, reason: "ISSUER_MISMATCH" }); return { ok: false, reason: "HITL_SIGNATURE_INVALID" }; }
+    if (new Date(item.notAfter).getTime() < Date.now()) { audit("HITL_APPROVE_DENIED", { nonce, reason: "EXPIRED" }); return { ok: false, reason: "EXPIRED" }; }
+    const { approved, signature, ...body } = item;
+    const sigOk = await C().verify(humanKeys.pub, body, signature).catch(() => false);
+    if (!sigOk) { audit("HITL_SIGNATURE_INVALID", { nonce, reason: "BAD_SIGNATURE" }); return { ok: false, reason: "HITL_SIGNATURE_INVALID" }; }
     // Freigabe = NEUE VC-signierte Entscheidung des Menschen (nicht bloßes OK)
     const grant = { kind: "lasp/hitl-grant/v1", nonce, by: humanKeys.did, at: new Date().toISOString() };
     grant.signature = await C().sign(humanKeys.priv, grant);
@@ -302,6 +338,27 @@
     return { ok: true, count: auditLog.length };
   }
 
+  async function sealPipeline(password, cap, issuerPub, io = {}) {
+    const fail = async (code, detail) => { audit(code, detail); await finalizeChain(); const err = new Error(code); err.code = code; throw err; };
+    if (typeof password !== "string" || password.length < 12) return fail("PIPELINE_SEAL_ABORTED", { reason: "PASSWORD_TOO_WEAK" });
+    audit("PIPELINE_SEAL_REQUEST", { path: io.path || "/audit/seal" });
+    await finalizeChain();
+    const before = await verifyChain();
+    if (!before.ok) return fail("PIPELINE_SEAL_ABORTED", { reason: "AUDIT_CHAIN_INVALID", at: before.at });
+    const gate = await execInSandbox(cap, null, issuerPub, { tool: io.tool || "audit-seal", host: io.host || "localhost", path: io.path || "/audit/seal", env: io.env || {}, a: 0, b: 0, amount: 0, envelope: io.envelope });
+    if (!gate.ok) return fail("PIPELINE_SEAL_ABORTED", { reason: gate.reason });
+    audit("PIPELINE_SEAL_APPROVED", { path: io.path || "/audit/seal" });
+    await finalizeChain();
+    const after = await verifyChain();
+    if (!after.ok) return fail("PIPELINE_SEAL_ABORTED", { reason: "AUDIT_CHAIN_INVALID", at: after.at });
+    try {
+      const bundle = await C().encryptLog(password, JSON.stringify(auditLog));
+      return { ok: true, bundle, chain: after };
+    } catch (e) {
+      return fail("PIPELINE_SEAL_ABORTED", { reason: e && e.code ? e.code : "ENCRYPTION_FAILED" });
+    }
+  }
+
   // WebMCP-Polyfill
   if (!document.modelContext) {
     document.modelContext = {
@@ -312,10 +369,10 @@
   }
 
   window.LASP = {
-    evaluate, registerTool, validateArgs, toolRegistry, sanitizeDOM, quarantine,
+    evaluate, registerTool, validateArgs, toolRegistry, sanitizeDOM, quarantine, inspectInjection,
     policyCheck, policyState, checkCapability, execInSandbox, revokedCaps,
     memWrite, memRead, escalate, approve, hitlQueue,
-    audit, auditLog, finalizeChain, verifyChain,
+    audit, auditLog, finalizeChain, verifyChain, sealPipeline,
     INJECTION_MARKERS, FORBIDDEN_MARKERS,
   };
 })();

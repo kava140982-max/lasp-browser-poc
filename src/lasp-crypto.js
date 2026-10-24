@@ -105,12 +105,14 @@
 
   // --- Audit-Verschlüsselung (AES-GCM, PBKDF2 100k) ---
   async function deriveKey(password, saltB64u) {
+    if (typeof password !== "string" || password.length < 12) { const e = new Error("PASSWORD_TOO_WEAK"); e.code = "PASSWORD_TOO_WEAK"; throw e; }
     const base = await crypto.subtle.importKey("raw", te.encode(password), "PBKDF2", false, ["deriveKey"]);
     return crypto.subtle.deriveKey(
       { name: "PBKDF2", salt: b64u.dec(saltB64u), iterations: 100000, hash: "SHA-256" },
       base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
   }
   async function encryptLog(password, plainText) {
+    if (typeof password !== "string" || password.length < 12) { const e = new Error("PASSWORD_TOO_WEAK"); e.code = "PASSWORD_TOO_WEAK"; throw e; }
     const salt = b64u.enc(crypto.getRandomValues(new Uint8Array(16)));
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const key = await deriveKey(password, salt);

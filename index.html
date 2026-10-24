@@ -146,7 +146,7 @@ async function runFullPipeline(rawText, toolArgs, opts = {}) {
     data_class: opts.dataClass || "public_research", model_route: "local",
     tenant_id: opts.tenant || "sandbox-tenant-1", authorization_id: "lasp-authz-demo-001",
     authorization_verified: opts.auth !== false, role: opts.role || "analyst",
-    context_payload: q.fields.text, environment_integrity: true,
+    context_payload: q.fields.text, inject_blocked: q.isBlocked === true || domHits.some((h) => h.isBlocked === true), environment_integrity: true,
     external_write: !!opts.externalWrite, forbidden_intent: q.dropped.includes("FORBIDDEN_INTENT"),
     domain_case: q.dropped.includes("FORBIDDEN_INTENT") ? "forbidden" : undefined,
   };
@@ -376,7 +376,7 @@ async function renderTab() {
     $("aClear").onclick = () => { LASP.auditLog.length = 0; renderAudit(); };
     $("aEnc").onclick = async () => {
       await LASP.finalizeChain();
-      if (!$("aPw").value) { $("aOut").textContent = "❌ Erst Master-Passwort setzen."; return; }
+      if ($("aPw").value.length < 12) { $("aOut").textContent = "❌ Master-Passwort muss mindestens 12 Zeichen haben."; return; }
       $("aBundle").value = await LASPCrypto.encryptLog($("aPw").value, JSON.stringify(LASP.auditLog));
       $("aOut").textContent = "✅ verschlüsselt (" + $("aBundle").value.length + " Zeichen). Passwortfeld jetzt leeren!";
       $("aPw").value = "";
