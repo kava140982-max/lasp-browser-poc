@@ -1,0 +1,9 @@
+{
+  "name": "lasp-browser-poc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LASP Browser-PoC (SIMULATED_LAB, not a certification)",
+  "scripts": {
+    "start": "npx serve ."
+  }
+}

@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+title: "LASP — AI-Agent Security Proxy"
+message: "Please cite the specific commit or release used."
+type: software
+authors:
+  - family-names: Valenta
+    given-names: Kai
+    affiliation: "Apophis Systems"
+    email: Kava140982@gmail.com
+repository-code: "https://github.com/kava140982-max/lasp-browser-poc"
+url: "https://kava140982-max.github.io/lasp-browser-poc/"
+license: MIT
+version: 0.1.0
+date-released: 2026-10-24
+keywords:
+  - AI agents
+  - agent security
+  - prompt injection
+  - browser security
+  - WebMCP
+  - WebAssembly
+  - human-in-the-loop
+  - verifiable credentials

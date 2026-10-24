@@ -1,0 +1,52 @@
+name: LASP checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Verify checksums
+        run: sha256sum -c SHA256SUMS.txt
+      - name: Check JavaScript syntax
+        run: |
+          node --check src/lasp-crypto.js
+          node --check src/lasp-core.js
+      - name: Check JSON/YAML metadata
+        run: |
+          python3 - <<'PY'
+          import json
+          json.load(open('package.json', encoding='utf-8'))
+          print('package.json: OK')
+          PY
+
+  pages:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
