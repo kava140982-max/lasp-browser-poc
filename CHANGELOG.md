@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased — Stufe 3 (Strikte Allowlists & Capability-Revocation)
+
+- `src/lasp-pipeline-core.js`: `_buildSealCapability` no longer emits `null` allowlists
+  (which `checkCapability()` treats as "skip check" = silent pass-through). Strict
+  defaults are now baked into every seal token: `pathAllow: ["/audit/seal"]`,
+  `hostAllow: ["localhost", "127.0.0.1"]`, `envAllow: []`, `action: "seal"`,
+  `maxAge` hard-capped to 3600 s with an `exp` claim; wildcard entries (`*`, `/`, ``)
+  and empty lists are rejected at token build time (`CAP_SCOPE_INVALID`, fail-closed).
+- New three-stage gate `_assertSealCapability()` runs before `execInSandbox()`:
+  scope check (path/host/env vs. token allowlist), expiration check (`exp` claim),
+  revocation check against both the simulated pipeline blocklist
+  (`window.LASP_SEAL_REVOKED_CAP_IDS` / `LASP.REVOKED_CAP_IDS`) and the real
+  `LASP.revokedCaps` set. Every denial writes a `PIPELINE_CAPABILITY_DENIED` entry
+  (reason + timestamp + capId/nonce) to the audit chain BEFORE throwing — no throw
+  without a record, no silent pass-through.
+- Public API additions: `LASPPipeline.revokeSealCapability(capIdOrNonce)` (audits a
+  `PIPELINE_CAPABILITY_REVOKED` entry), `getRevokedCapIds()`, `SEAL_DEFAULTS`.
+- Chain hygiene fix: all pipeline audit writes (mirrored stage events, seal aborts,
+  denials, revocations) now finalize the hash chain immediately, so `verifyChain()`
+  stays green between calls instead of exposing transient `pending:` placeholders.
+  No behavior change to `finalizeAndSealAuditLog` semantics or `verifyChain` itself.
+- Verified by Node/WebCrypto integration test (`test-stage3.js`): 23 checks green
+  (happy-path seal, strict-token success, wildcard/empty-list rejection, foreign
+  path/host denial with DENIED-before-throw ordering, expired-token denial via core
+  gate and via `options.cap`, revoked-nonce end-to-end denial, stage A/B regression,
+  final `verifyChain()` over all events).
+
 ## Unreleased — Stufe 2 (Finalize, Wasm-Gating & AES-GCM/PBKDF2 Seal)
 
 - Extended `src/lasp-pipeline-core.js` with `finalizeAndSealAuditLog(password, options)`:
