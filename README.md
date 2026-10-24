@@ -1,3 +1,18 @@
+## Status
+
+[![Status: SYNTHETIC_LAB](https://img.shields.io/badge/status-SYNTHETIC__LAB-7c3aed)](./SPEC.md)
+[![Assurance: PASS_WITH_LIMITATIONS](https://img.shields.io/badge/assurance-PASS__WITH__LIMITATIONS-f59e0b)](./README.md#status)
+[![Security scope: Research prototype](https://img.shields.io/badge/security%20scope-RESEARCH__PROTOTYPE-16a34a)](./SPEC.md)
+[![Validation: Synthetic adversarial tests](https://img.shields.io/badge/validation-SYNTHETIC__ADVERSARIAL__TESTS-0ea5e9)](./README.md#status)
+
+LASP is a synthetic browser laboratory for AI-agent security research. It models a fail-closed control pipeline for untrusted content, delegated authority, capability checks, and human-in-the-loop approval under deterministic adversarial test vectors.
+
+This repository is intentionally scoped as a local, inspectable, browser-based prototype. It is designed to make the security logic transparent, challengeable, and testable without claiming production deployment safety, certification, or field validation.
+
+The validation performed here is synthetic and reproducible rather than field-based or certification-grade. It exercises policy enforcement, prompt-injection resistance, scope validation, escalation logic, and audit-chain integrity in a controlled local environment. The project does not claim production security validation, compliance assurance, or real-world deployment safety.
+
+LASP is a research artifact, not a production security boundary, identity system, compliance control, or deployed defense layer. Its value is in making the underlying control logic inspectable, testable, and contestable before any larger system is built around it.
+
 # LASP — AI-Agent Security Proxy
 
 [![Status: SIMULATED_LAB](https://img.shields.io/badge/status-SIMULATED__LAB-7c3aed)](./SPEC.md)
