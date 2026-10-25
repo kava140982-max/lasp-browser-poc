@@ -25,7 +25,7 @@ LASP is a research artifact, not a production security boundary, identity system
 
 > **Honest status:** LASP is a synthetic browser laboratory and research prototype. It is **not** a finished security product, certification, compliance claim, production security boundary or independent assurance report.
 
-[Live demo on GitHub Pages](https://kava140982-max.github.io/lasp-browser-poc/) · [Specification](./SPEC.md) · [Security policy](./SECURITY.md) · [Contact](mailto:Kava140982@gmail.com)
+[Live demo on GitHub Pages](https://kava140982-max.github.io/lasp-browser-poc/) · [M&M story](./MM-STORY.md) · [Specification](./SPEC.md) · [Security policy](./SECURITY.md) · [Contact](mailto:Kava140982@gmail.com)
 
 ## Why LASP exists
 
@@ -103,7 +103,7 @@ See [SPEC.md](./SPEC.md) for the ten architectural areas and their explicit limi
 
 LASP is a research prototype. Do not use it as a production security boundary, identity provider, payment control, compliance decision, medical system or critical-infrastructure control. The browser owns the runtime; the demo has no server-side trust anchor, no external revocation registry, no real OIDC provider, no WASI host, no independent penetration test and no certification.
 
-The current PoC includes a known review item in the demo HITL approval path: the signature result is computed but must be enforced before a real approval is accepted. Treat the PoC as a testable research artifact, not as a deployable authorization service.
+The current PoC includes fail-closed signature enforcement in the demo HITL approval path. Treat the PoC nevertheless as a testable research artifact, not as a deployable authorization service; browser runtime, trust anchor, revocation registry, WASI host and independent assurance remain out of scope.
 
 ## Research posture
 
